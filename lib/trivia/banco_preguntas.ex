@@ -175,6 +175,7 @@ defmodule Trivia.BancoPreguntas do
     end
   end
 
+
   # Selecciona preguntas aleatorias sin repetir
   def seleccionar_preguntas(tema, nivel, cantidad)
       when is_integer(cantidad) and cantidad > 0 do
