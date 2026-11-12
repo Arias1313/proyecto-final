@@ -27,9 +27,9 @@ defmodule Trivia.GestorJugadores do
     end
   end
 
-  # Solicita registrar un nuevo usuario
-  def registrar(usuario) do
-    GenServer.call(__MODULE__, {:registrar, usuario})
+  # Solicita conectar o registrar un jugador
+  def conectar(usuario, clave) do
+    GenServer.call(__MODULE__, {:conectar, usuario, clave})
   end
 
   # Procesa el registro
