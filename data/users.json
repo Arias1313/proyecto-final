@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "usuario": "jugador1"
+  },
+  {
+    "usuario": "jugador2"
+  },
+  {
+    "usuario": "jugador3"
+  }
+]
