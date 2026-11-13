@@ -26,6 +26,9 @@ defmodule Trivia.Cliente do
     IO.puts("conectados")
     IO.puts("create_game tema=<tema> preguntas=<n> tiempo=<segundos>")
     IO.puts("list_games")
+    IO.puts("add_bot facil|dificil")
+    IO.puts("start_game")
+    IO.puts("answer A|B|C|D")
     IO.puts("disconnect")
     IO.puts("ayuda")
     IO.puts("salir")
@@ -197,6 +200,93 @@ defmodule Trivia.Cliente do
 
       {:error, motivo} ->
         IO.puts("Error: #{motivo}")
+    end
+
+    {:continuar, estado}
+  end
+
+  # ============================================================
+  # AGREGAR BOTS A LA PARTIDA
+  # ============================================================
+
+  # Permite agregar un bot a la partida del usuario conectado
+  defp procesar_comando("add_bot " <> dificultad, estado) do
+    if estado.usuario == nil do
+      IO.puts("Debes iniciar sesion primero")
+    else
+      # Envia al servidor la dificultad solicitada
+      respuesta =
+        Servidor.solicitar(
+          estado.servidor,
+          {:add_bot, String.trim(dificultad)}
+        )
+
+      # Muestra si el bot fue agregado o si hubo un error
+      case respuesta do
+        {:ok, nombre} ->
+          IO.puts("Bot agregado correctamente: #{nombre}")
+
+        {:error, motivo} ->
+          IO.puts("Error: #{motivo}")
+      end
+    end
+
+    {:continuar, estado}
+  end
+
+  # ============================================================
+  # INICIO DE LA PARTIDA
+  # ============================================================
+
+  # Solicita iniciar la partida creada por el jugador
+  defp procesar_comando("start_game", estado) do
+    if estado.usuario == nil do
+      IO.puts("Debes iniciar sesion primero")
+    else
+      # Envia la solicitud al servidor
+      respuesta =
+        Servidor.solicitar(
+          estado.servidor,
+          :start_game
+        )
+
+      # Comprueba si la partida pudo iniciar
+      case respuesta do
+        {:ok, mensaje} ->
+          IO.puts(mensaje)
+
+        {:error, motivo} ->
+          IO.puts("Error: #{motivo}")
+      end
+    end
+
+    {:continuar, estado}
+  end
+
+  # ============================================================
+  # RESPUESTAS A LAS PREGUNTAS
+  # ============================================================
+
+  # Permite responder una pregunta usando A, B, C o D
+  defp procesar_comando("answer " <> opcion, estado) do
+    if estado.usuario == nil do
+      IO.puts("Debes iniciar sesion primero")
+    else
+      # Envia la respuesta al servidor para que sea validada
+      respuesta =
+        Servidor.solicitar(
+          estado.servidor,
+          {:answer, String.trim(opcion)}
+        )
+
+      # Muestra si la respuesta fue correcta o incorrecta
+      case respuesta do
+        {:ok, mensaje} ->
+          IO.puts(mensaje)
+
+        {:error, motivo} ->
+          IO.puts("Error: #{motivo}")
+      end
     end
 
     {:continuar, estado}

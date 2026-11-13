@@ -34,5 +34,41 @@
   {
     "clave": "1234",
     "usuario": "concurrente_5"
+  },
+  {
+    "clave": "1234",
+    "usuario": "jugador_bots"
+  },
+  {
+    "clave": "1234",
+    "usuario": "jugador_inicio"
+  },
+  {
+    "clave": "1234",
+    "usuario": "jugador_preguntas"
+  },
+  {
+    "clave": "1234",
+    "usuario": "jugador_respuestas"
+  },
+  {
+    "clave": "1234",
+    "usuario": "arias"
+  },
+  {
+    "clave": "1234",
+    "usuario": "jugador_tiempo"
+  },
+  {
+    "clave": "1234",
+    "usuario": "jugador_puntos"
+  },
+  {
+    "clave": "1234",
+    "usuario": "sapo"
+  },
+  {
+    "clave": "1234",
+    "usuario": "jugador_final"
   }
 ]

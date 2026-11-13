@@ -168,4 +168,63 @@ defmodule Trivia.Servidor do
         {:noreply, %{estado | sesiones: sesiones}}
     end
   end
+
+
+# Permite agregar un bot desde un cliente conectado
+@impl true
+def handle_call({:add_bot, dificultad}, {pid_cliente, _}, estado) do
+
+  case buscar_sesion(estado.sesiones, pid_cliente) do
+    nil ->
+      {:reply, {:error, "Debes iniciar sesion"}, estado}
+
+    sesion ->
+      case GestorPartidas.buscar_partida_usuario(sesion.usuario) do
+        {:ok, id} ->
+          respuesta =
+            GestorPartidas.agregar_bot(
+              id,
+              dificultad,
+              sesion.usuario
+            )
+
+          {:reply, respuesta, estado}
+
+        {:error, motivo} ->
+          {:reply, {:error, motivo}, estado}
+      end
+  end
+end
+
+# Permite iniciar la partida del jugador conectado
+@impl true
+def handle_call(:start_game, {pid_cliente, _}, estado) do
+  case buscar_sesion(estado.sesiones, pid_cliente) do
+    nil ->
+      {:reply, {:error, "Debes iniciar sesion"}, estado}
+
+    sesion ->
+      respuesta = GestorPartidas.iniciar_partida(sesion.usuario)
+      {:reply, respuesta, estado}
+  end
+end
+
+
+# Recibe la respuesta de un cliente conectado
+@impl true
+def handle_call({:answer, opcion}, {pid_cliente, _}, estado) do
+  case buscar_sesion(estado.sesiones, pid_cliente) do
+    nil ->
+      {:reply, {:error, "Debes iniciar sesion"}, estado}
+
+    sesion ->
+      respuesta =
+        GestorPartidas.responder(sesion.usuario, opcion)
+
+      {:reply, respuesta, estado}
+  end
+end
+
+
+
 end
