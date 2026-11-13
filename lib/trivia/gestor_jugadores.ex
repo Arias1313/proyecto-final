@@ -1,11 +1,10 @@
 
 defmodule Trivia.GestorJugadores do
-
   use GenServer
 
   alias Trivia.Persistencia
 
-  # Inicia el proceso que administra los jugadores
+  # Inicia el proceso GestorJugadores
   def start_link(_) do
     GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
   end
@@ -32,66 +31,90 @@ defmodule Trivia.GestorJugadores do
     GenServer.call(__MODULE__, {:conectar, usuario, clave})
   end
 
-  # Procesa el registro
+  # Procesa la solicitud de conexion
   @impl true
-  def handle_call({:registrar, usuario}, _from, estado) do
-    cond do
-      not is_binary(usuario) ->
-        {:reply, {:error, "El usuario debe ser un texto"}, estado}
+  def handle_call({:conectar, usuario, clave}, _from, estado) do
+    case validar_datos(usuario, clave) do
+      :ok ->
+        procesar_conexion(usuario, clave, estado)
 
-      String.trim(usuario) == "" ->
-        {:reply, {:error, "El usuario no puede estar vacio"}, estado}
-
-      usuario_existente?(estado.usuarios, usuario) ->
-        {:reply, {:error, "El usuario ya esta registrado"}, estado}
-
-      true ->
-        nuevo_usuario = %{"usuario" => usuario}
-        nuevos_usuarios = estado.usuarios ++ [nuevo_usuario]
-
-        case Persistencia.guardar_usuarios(nuevos_usuarios) do
-          {:ok, _} ->
-            nuevo_estado = %{estado | usuarios: nuevos_usuarios}
-
-            {:reply, {:ok, "Usuario registrado correctamente"}, nuevo_estado}
-
-          {:error, motivo} ->
-            {:reply, {:error, motivo}, estado}
-        end
+      {:error, motivo} ->
+        {:reply, {:error, motivo}, estado}
     end
   end
 
-  # Comprueba si un usuario ya existe
-  defp usuario_existente?(usuarios, nombre) do
-    Enum.any?(usuarios, fn usuario ->
-      usuario["usuario"] == nombre
-    end)
-  end
-
-  # Solicita iniciar sesion
-  def iniciar_sesion(usuario) do
-    GenServer.call(__MODULE__, {:iniciar_sesion, usuario})
-  end
-
-  # Procesa el inicio de sesion
-  @impl true
-  def handle_call({:iniciar_sesion, usuario}, _from, estado) do
+  # Valida el nombre y la contraseña
+  defp validar_datos(usuario, clave) do
     cond do
-      not usuario_existente?(estado.usuarios, usuario) ->
-        {:reply, {:error, "El usuario no esta registrado"}, estado}
+      not is_binary(usuario) or String.trim(usuario) == "" ->
+        {:error, "El usuario no puede estar vacio"}
 
+      String.match?(usuario, ~r/\s/u) ->
+        {:error, "El usuario no puede contener espacios"}
+
+      String.starts_with?(usuario, "bot_") ->
+        {:error, "El prefijo bot_ esta reservado"}
+
+      not is_binary(clave) or clave == "" ->
+        {:error, "La clave no puede estar vacia"}
+
+      true ->
+        :ok
+    end
+  end
+
+  # Determina si el usuario existe o debe registrarse
+  defp procesar_conexion(usuario, clave, estado) do
+    encontrado =
+      Enum.find(estado.usuarios, fn jugador ->
+        jugador["usuario"] == usuario
+      end)
+
+    cond do
       usuario in estado.conectados ->
         {:reply, {:error, "El usuario ya tiene una sesion activa"}, estado}
 
+      encontrado == nil ->
+        registrar_nuevo(usuario, clave, estado)
+
+      encontrado["clave"] != clave ->
+        {:reply, {:error, "Clave incorrecta"}, estado}
+
       true ->
-        nuevos_conectados = [usuario | estado.conectados]
-        nuevo_estado = %{estado | conectados: nuevos_conectados}
+        nuevo_estado = %{
+          estado |
+          conectados: [usuario | estado.conectados]
+        }
 
         {:reply, {:ok, "Sesion iniciada correctamente"}, nuevo_estado}
     end
   end
 
-  # Solicita cerrar sesion
+  # Registra automaticamente al usuario nuevo
+  defp registrar_nuevo(usuario, clave, estado) do
+    nuevo_usuario = %{
+      "usuario" => usuario,
+      "clave" => clave
+    }
+
+    nuevos_usuarios = estado.usuarios ++ [nuevo_usuario]
+
+    case Persistencia.guardar_usuarios(nuevos_usuarios) do
+      {:ok, _} ->
+        nuevo_estado = %{
+          estado |
+          usuarios: nuevos_usuarios,
+          conectados: [usuario | estado.conectados]
+        }
+
+        {:reply, {:ok, "Usuario registrado y conectado"}, nuevo_estado}
+
+      {:error, motivo} ->
+        {:reply, {:error, motivo}, estado}
+    end
+  end
+
+  # Solicita cerrar la sesion
   def cerrar_sesion(usuario) do
     GenServer.call(__MODULE__, {:cerrar_sesion, usuario})
   end
@@ -101,7 +124,11 @@ defmodule Trivia.GestorJugadores do
   def handle_call({:cerrar_sesion, usuario}, _from, estado) do
     if usuario in estado.conectados do
       nuevos_conectados = List.delete(estado.conectados, usuario)
-      nuevo_estado = %{estado | conectados: nuevos_conectados}
+
+      nuevo_estado = %{
+        estado |
+        conectados: nuevos_conectados
+      }
 
       {:reply, {:ok, "Sesion cerrada correctamente"}, nuevo_estado}
     else
@@ -109,7 +136,7 @@ defmodule Trivia.GestorJugadores do
     end
   end
 
-  # Solicita la lista de usuarios registrados
+  # Consulta los usuarios registrados
   def listar_usuarios do
     GenServer.call(__MODULE__, :listar_usuarios)
   end
@@ -119,7 +146,7 @@ defmodule Trivia.GestorJugadores do
     {:reply, {:ok, estado.usuarios}, estado}
   end
 
-  # Solicita la lista de jugadores conectados
+  # Consulta los jugadores conectados
   def listar_conectados do
     GenServer.call(__MODULE__, :listar_conectados)
   end
