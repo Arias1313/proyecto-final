@@ -10,5 +10,29 @@
   {
     "clave": "1234",
     "usuario": "jugador5"
+  },
+  {
+    "clave": "1234",
+    "usuario": "prueba_persistencia"
+  },
+  {
+    "clave": "1234",
+    "usuario": "concurrente_1"
+  },
+  {
+    "clave": "1234",
+    "usuario": "concurrente_2"
+  },
+  {
+    "clave": "1234",
+    "usuario": "concurrente_3"
+  },
+  {
+    "clave": "1234",
+    "usuario": "concurrente_4"
+  },
+  {
+    "clave": "1234",
+    "usuario": "concurrente_5"
   }
 ]

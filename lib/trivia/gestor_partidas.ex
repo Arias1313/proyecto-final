@@ -4,8 +4,9 @@ defmodule Trivia.GestorPartidas do
 
   alias Trivia.SupervisorPartidas
   alias Trivia.Partida
+  alias Trivia.Persistencia
 
-  # Inicia el gestor
+  # Inicia el gestor de partidas
   def start_link(_) do
     GenServer.start_link(
       __MODULE__,
@@ -16,68 +17,41 @@ defmodule Trivia.GestorPartidas do
 
   @impl true
   def init(_) do
-    estado = %{
-      partidas: %{},
-      contador: 0
-    }
-
-    {:ok, estado}
+    {:ok, %{partidas: %{}, contador: 0}}
   end
 
-  # Solicita crear una partida
+  # Mantiene la funcion utilizada en pruebas anteriores
   def crear_partida(creador, tema, cantidad, tiempo) do
+    crear_partida(creador, tema, cantidad, tiempo, nil)
+  end
+
+  # Crea una partida con el receptor del jugador
+  def crear_partida(creador, tema, cantidad, tiempo, receptor) do
     GenServer.call(
       __MODULE__,
-      {:crear_partida, creador, tema, cantidad, tiempo}
+      {:crear_partida, creador, tema, cantidad, tiempo, receptor}
     )
   end
 
-  # Procesa la creacion
+  # Procesa la solicitud de creacion
   @impl true
   def handle_call(
-        {:crear_partida, creador, tema, cantidad, tiempo},
+        {:crear_partida, creador, tema, cantidad, tiempo, receptor},
         _from,
         estado
       ) do
 
-    case validar_datos(creador, tema, cantidad, tiempo) do
+    case validar_datos(creador, tema, cantidad, tiempo, receptor) do
       :ok ->
-        id = estado.contador + 1
-
-        datos = %{
-          id: id,
-          creador: creador,
-          tema: tema,
-          cantidad: cantidad,
-          tiempo: tiempo
-        }
-
-        case SupervisorPartidas.iniciar_partida(datos) do
-          {:ok, pid} ->
-            referencia = Process.monitor(pid)
-
-            informacion = %{
-              pid: pid,
-              referencia: referencia,
-              creador: creador,
-              tema: tema,
-              cantidad: cantidad,
-              tiempo: tiempo
-            }
-
-            partidas =
-              Map.put(estado.partidas, id, informacion)
-
-            nuevo_estado = %{
-              estado |
-              partidas: partidas,
-              contador: id
-            }
-
-            {:reply, {:ok, id}, nuevo_estado}
+        case Persistencia.consultar_nivel(creador, tema) do
+          {:ok, nivel} ->
+            iniciar_nueva_partida(
+              creador, tema, cantidad, tiempo,
+              receptor, nivel, estado
+            )
 
           {:error, motivo} ->
-            {:reply, {:error, inspect(motivo)}, estado}
+            {:reply, {:error, motivo}, estado}
         end
 
       {:error, motivo} ->
@@ -85,8 +59,55 @@ defmodule Trivia.GestorPartidas do
     end
   end
 
-  # Valida los datos recibidos
-  defp validar_datos(creador, tema, cantidad, tiempo) do
+  # Inicia el proceso individual de la partida
+  defp iniciar_nueva_partida(
+         creador, tema, cantidad, tiempo,
+         receptor, nivel, estado
+       ) do
+
+    id = estado.contador + 1
+
+    datos = %{
+      id: id,
+      creador: creador,
+      tema: tema,
+      cantidad: cantidad,
+      tiempo: tiempo,
+      receptor: receptor,
+      nivel: nivel
+    }
+
+    case SupervisorPartidas.iniciar_partida(datos) do
+      {:ok, pid} ->
+        referencia = Process.monitor(pid)
+
+        informacion = %{
+          pid: pid,
+          referencia: referencia,
+          creador: creador,
+          tema: tema,
+          cantidad: cantidad,
+          tiempo: tiempo,
+          nivel: nivel
+        }
+
+        partidas = Map.put(estado.partidas, id, informacion)
+
+        nuevo_estado = %{
+          estado |
+          partidas: partidas,
+          contador: id
+        }
+
+        {:reply, {:ok, id, nivel}, nuevo_estado}
+
+      {:error, motivo} ->
+        {:reply, {:error, inspect(motivo)}, estado}
+    end
+  end
+
+  # Valida los datos de la partida
+  defp validar_datos(creador, tema, cantidad, tiempo, receptor) do
     temas = ["ciencia", "historia", "geografia", "tecnologia"]
 
     cond do
@@ -96,21 +117,21 @@ defmodule Trivia.GestorPartidas do
       tema not in temas ->
         {:error, "Tema no permitido"}
 
-      not is_integer(cantidad) or cantidad < 1 ->
-        {:error, "Cantidad de preguntas invalida"}
-
-      cantidad > 24 ->
-        {:error, "El maximo por tema es 24 preguntas"}
+      not is_integer(cantidad) or cantidad < 1 or cantidad > 10 ->
+        {:error, "La cantidad debe estar entre 1 y 10"}
 
       not is_integer(tiempo) or tiempo <= 0 ->
         {:error, "Tiempo invalido"}
+
+      receptor != nil and not is_pid(receptor) ->
+        {:error, "Receptor invalido"}
 
       true ->
         :ok
     end
   end
 
-  # Consulta todas las partidas
+  # Lista las partidas registradas
   def listar_partidas do
     GenServer.call(__MODULE__, :listar_partidas)
   end
@@ -124,14 +145,15 @@ defmodule Trivia.GestorPartidas do
           creador: datos.creador,
           tema: datos.tema,
           cantidad: datos.cantidad,
-          tiempo: datos.tiempo
+          tiempo: datos.tiempo,
+          nivel: datos.nivel
         }
       end)
 
     {:reply, {:ok, Enum.sort_by(partidas, & &1.id)}, estado}
   end
 
-  # Consulta una partida especifica
+  # Consulta una partida por su identificador
   def obtener_partida(id) do
     GenServer.call(__MODULE__, {:obtener_partida, id})
   end
@@ -148,11 +170,12 @@ defmodule Trivia.GestorPartidas do
     end
   end
 
-  # Elimina del registro las partidas que terminan
+  # Elimina del registro una partida cuyo proceso termino
   @impl true
   def handle_info({:DOWN, referencia, :process, _pid, _motivo}, estado) do
     partidas =
-      Enum.reject(estado.partidas, fn {_id, datos} ->
+      estado.partidas
+      |> Enum.reject(fn {_id, datos} ->
         datos.referencia == referencia
       end)
       |> Map.new()

@@ -204,5 +204,64 @@ defmodule Trivia.BancoPreguntas do
   end
 
 
+  # Selecciona las preguntas segun el nivel del jugador
+  def preparar_preguntas(tema, nivel, cantidad) do
+    case Trivia.Nivel.distribuir_preguntas(nivel, cantidad) do
+      {:error, motivo} ->
+        {:error, motivo}
+
+      distribucion ->
+        niveles = [
+          {"basico", distribucion.basico},
+          {"intermedio", distribucion.intermedio},
+          {"avanzado", distribucion.avanzado}
+        ]
+
+        seleccionar_por_niveles(tema, niveles, [])
+    end
+  end
+
+  # Caso base: terminamos de procesar los niveles
+  defp seleccionar_por_niveles(_tema, [], acumulado) do
+    {:ok, acumulado}
+  end
+
+  # Selecciona preguntas del nivel correspondiente
+  defp seleccionar_por_niveles(
+         tema, [{nivel, cantidad} | resto], acumulado
+       ) do
+
+    if cantidad == 0 do
+      seleccionar_por_niveles(tema, resto, acumulado)
+    else
+      case seleccionar_preguntas(tema, nivel, cantidad) do
+        {:ok, preguntas} ->
+          seleccionar_por_niveles(
+            tema,
+            resto,
+            acumulado ++ preguntas
+          )
+
+        {:error, motivo} ->
+          {:error, "#{nivel}: #{motivo}"}
+      end
+    end
+  end
+
+
+  # Prepara preguntas segun los puntos historicos
+  def preparar_para_jugador(usuario, tema, cantidad) do
+    case Trivia.Persistencia.consultar_nivel(usuario, tema) do
+      {:ok, nivel} ->
+        preparar_preguntas(tema, nivel, cantidad)
+
+      {:error, motivo} ->
+        {:error, motivo}
+    end
+  end
+
+
+
+
 
 end

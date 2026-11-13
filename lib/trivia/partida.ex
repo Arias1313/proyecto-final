@@ -2,18 +2,18 @@
 defmodule Trivia.Partida do
   use GenServer
 
-  # Inicia el proceso de una partida
+  # Inicia un proceso independiente para la partida
   def start_link(datos) do
     GenServer.start_link(__MODULE__, datos)
   end
 
-  # Evita reiniciar automaticamente partidas terminadas
+  # Configura la supervision de las partidas
   @impl true
   def child_spec(datos) do
     %{
       id: __MODULE__,
       start: {__MODULE__, :start_link, [datos]},
-      restart: :temporary
+      restart: :transient
     }
   end
 
@@ -26,6 +26,8 @@ defmodule Trivia.Partida do
       tema: datos.tema,
       cantidad: datos.cantidad,
       tiempo: datos.tiempo,
+      receptor: Map.get(datos, :receptor),
+      nivel: datos.nivel,
       estado: :esperando,
       pregunta_actual: 0,
       jugadores: [datos.creador],
@@ -35,7 +37,7 @@ defmodule Trivia.Partida do
     {:ok, estado}
   end
 
-  # Permite consultar la informacion de una partida
+  # Consulta el estado de una partida
   def obtener_estado(pid) do
     GenServer.call(pid, :obtener_estado)
   end

@@ -24,6 +24,8 @@ defmodule Trivia.Cliente do
     IO.puts("\nComandos disponibles:")
     IO.puts("connect usuario clave")
     IO.puts("conectados")
+    IO.puts("create_game tema=<tema> preguntas=<n> tiempo=<segundos>")
+    IO.puts("list_games")
     IO.puts("disconnect")
     IO.puts("ayuda")
     IO.puts("salir")
@@ -51,6 +53,10 @@ defmodule Trivia.Cliente do
         end
     end
   end
+
+  # ============================================================
+  # CONEXION DE USUARIOS
+  # ============================================================
 
   # Comando para conectarse
   defp procesar_comando("connect " <> datos, estado) do
@@ -107,6 +113,99 @@ defmodule Trivia.Cliente do
     {:continuar, estado}
   end
 
+  # ============================================================
+  # CREACION Y CONSULTA DE PARTIDAS
+  # ============================================================
+
+  # Recibe el comando para crear una partida
+  defp procesar_comando("create_game " <> datos, estado) do
+    if estado.usuario == nil do
+      IO.puts("Debes iniciar sesion primero")
+      {:continuar, estado}
+    else
+      case interpretar_creacion(datos) do
+        {:ok, tema, cantidad, tiempo} ->
+          respuesta =
+            Servidor.solicitar(
+              estado.servidor,
+              {:create_game, tema, cantidad, tiempo}
+            )
+
+          case respuesta do
+            {:ok, id, nivel} ->
+              IO.puts("\nPartida creada correctamente")
+              IO.puts("ID: #{id}")
+              IO.puts("Tema: #{tema}")
+              IO.puts("Preguntas: #{cantidad}")
+              IO.puts("Tiempo: #{tiempo} segundos")
+              IO.puts("Nivel: #{nivel}")
+
+            {:error, motivo} ->
+              IO.puts("Error: #{motivo}")
+          end
+
+          {:continuar, estado}
+
+        {:error, motivo} ->
+          IO.puts("Error: #{motivo}")
+          {:continuar, estado}
+      end
+    end
+  end
+
+  # Interpreta los parametros tema, preguntas y tiempo
+  defp interpretar_creacion(datos) do
+    partes = String.split(datos, ~r/\s+/, trim: true)
+
+    case partes do
+      [tema_param, preguntas_param, tiempo_param] ->
+        with "tema=" <> tema <- tema_param,
+             "preguntas=" <> cantidad_texto <- preguntas_param,
+             "tiempo=" <> tiempo_texto <- tiempo_param,
+             {cantidad, ""} <- Integer.parse(cantidad_texto),
+             {tiempo, ""} <- Integer.parse(tiempo_texto) do
+
+          {:ok, tema, cantidad, tiempo}
+        else
+          _ ->
+            {:error, "Uso: create_game tema=<tema> preguntas=<n> tiempo=<segundos>"}
+        end
+
+      _ ->
+        {:error, "Uso: create_game tema=<tema> preguntas=<n> tiempo=<segundos>"}
+    end
+  end
+
+  # Consulta las partidas existentes
+  defp procesar_comando("list_games", estado) do
+    case Servidor.solicitar(estado.servidor, :list_games) do
+      {:ok, []} ->
+        IO.puts("No hay partidas registradas")
+
+      {:ok, partidas} ->
+        IO.puts("\n===== PARTIDAS =====")
+
+        Enum.each(partidas, fn partida ->
+          IO.puts(
+            "ID: #{partida.id} | " <>
+            "Creador: #{partida.creador} | " <>
+            "Tema: #{partida.tema} | " <>
+            "Preguntas: #{partida.cantidad} | " <>
+            "Nivel: #{partida.nivel}"
+          )
+        end)
+
+      {:error, motivo} ->
+        IO.puts("Error: #{motivo}")
+    end
+
+    {:continuar, estado}
+  end
+
+  # ============================================================
+  # DESCONEXION Y SALIDA
+  # ============================================================
+
   # Cierra la sesion actual
   defp procesar_comando("disconnect", estado) do
     if estado.usuario == nil do
@@ -132,20 +231,24 @@ defmodule Trivia.Cliente do
     end
   end
 
+  # Muestra los comandos disponibles
   defp procesar_comando("ayuda", estado) do
     mostrar_ayuda()
     {:continuar, estado}
   end
 
+  # Finaliza el cliente
   defp procesar_comando("salir", estado) do
     cerrar_cliente(estado)
     :salir
   end
 
+  # Ignora entradas vacias
   defp procesar_comando("", estado) do
     {:continuar, estado}
   end
 
+  # Maneja comandos desconocidos
   defp procesar_comando(_, estado) do
     IO.puts("Comando desconocido. Escribe ayuda.")
     {:continuar, estado}
