@@ -15,7 +15,7 @@ defmodule Trivia.Application do
 
   defp iniciar_servidor do
     children = [
-      Trivia.GestorJugadores,  Trivia.Servidor
+      Trivia.GestorJugadores, Trivia.SupervisorPartidas, Trivia.GestorPartidas, Trivia.Servidor
     ]
 
     opciones = [
