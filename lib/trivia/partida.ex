@@ -35,11 +35,13 @@ defmodule Trivia.Partida do
       estado: :esperando,
       pregunta_actual: 0,
       jugadores: [datos.creador],
+      receptores: %{datos.creador => Map.get(datos, :receptor)},
       puntajes: %{datos.creador => 0},
       bots: [],
       siguiente_bot: 1,
       preguntas: [],
       inicio: nil,
+      respuestas_humanos: %{},
       respuesta_humano: nil,
       ronda_abierta: false,
       temporizador: nil,
@@ -66,6 +68,124 @@ defmodule Trivia.Partida do
   @impl true
   def handle_call(:obtener_estado, _from, estado) do
     {:reply, {:ok, estado}, estado}
+  end
+
+  # ETAPA 27: abandono voluntario o desconexion del creador.
+  # La partida procesa el abandono en su propio GenServer para que
+  # no se mezcle con las respuestas o con el temporizador.
+  def abandonar(pid), do: GenServer.call(pid, :abandonar)
+
+  @impl true
+  def handle_call(:abandonar, _from, estado) do
+    case estado.estado do
+      :esperando ->
+        # No hubo preguntas ni puntos: se cancela sin guardar historial.
+        detener_bots(estado)
+        {:reply, {:ok, "Partida cancelada antes de iniciar"},
+         %{estado | estado: :finalizada, fin: DateTime.utc_now()}}
+
+      :jugando ->
+        # Conserva solo los puntos de rondas ya cerradas.
+        # Una ronda abierta no se puntua parcialmente.
+        if estado.temporizador != nil,
+          do: Process.cancel_timer(estado.temporizador)
+
+        detener_bots(estado)
+        fin = DateTime.utc_now()
+        completadas = if estado.ronda_abierta,
+          do: estado.pregunta_actual - 1,
+          else: estado.pregunta_actual
+
+        mayor = estado.puntajes |> Map.values() |> Enum.max()
+        ganadores = estado.puntajes
+          |> Enum.filter(fn {_nombre, puntos} -> puntos == mayor end)
+          |> Enum.map(fn {nombre, _puntos} -> nombre end)
+
+        resultado = %{
+          id: estado.id,
+          creador: estado.creador,
+          tema: estado.tema,
+          nivel: estado.nivel,
+          cantidad: length(estado.preguntas),
+          tiempo: estado.tiempo,
+          jugadores: estado.jugadores,
+          puntajes: estado.puntajes,
+          ganadores: ganadores,
+          inicio: estado.inicio,
+          fin: fin,
+          motivo_fin: "abandono",
+          preguntas_completadas: completadas
+        }
+
+        # Solo liberamos la partida si el resultado pudo persistirse.
+        case Trivia.Persistencia.guardar_resultado(resultado) do
+          {:ok, _} ->
+            notificar(estado, "Partida terminada por abandono. Rondas completadas: #{completadas}")
+            {:reply, {:ok, "Partida terminada y resultado guardado"},
+             %{estado | estado: :finalizada, ronda_abierta: false,
+               temporizador: nil, fin: fin}}
+
+          {:error, motivo} ->
+            # No se marca como finalizada para permitir reintentar
+            # el guardado mediante un nuevo abandono.
+            {:reply, {:error, "No se pudo guardar el abandono: #{motivo}"},
+             %{estado | ronda_abierta: false, temporizador: nil}}
+        end
+
+      :finalizada ->
+        detener_bots(estado)
+        {:reply, {:ok, "La partida ya estaba finalizada"}, estado}
+    end
+  end
+
+  # Pide a cada bot que termine su ciclo de recepcion.
+  defp detener_bots(estado) do
+    Enum.each(estado.bots, fn bot -> send(bot.pid, :detener) end)
+  end
+
+  # Un jugador adicional entra solamente mientras se espera el inicio.
+  def unirse(pid, usuario, receptor), do: GenServer.call(pid, {:unirse, usuario, receptor})
+
+  @impl true
+  def handle_call({:unirse, usuario, receptor}, _from, estado) do
+    cond do
+      estado.estado != :esperando ->
+        {:reply, {:error, "La partida ya inicio"}, estado}
+      not is_pid(receptor) ->
+        {:reply, {:error, "Receptor invalido"}, estado}
+      usuario in estado.jugadores ->
+        {:reply, {:error, "Ya participas en esta partida"}, estado}
+      length(estado.jugadores) >= 4 ->
+        {:reply, {:error, "La partida esta llena"}, estado}
+      true ->
+        nuevo = %{estado |
+          jugadores: estado.jugadores ++ [usuario],
+          puntajes: Map.put(estado.puntajes, usuario, 0),
+          receptores: Map.put(estado.receptores, usuario, receptor)}
+        notificar(nuevo, "#{usuario} se unio a la partida #{estado.id}")
+        {:reply, {:ok, "Te uniste a la partida #{estado.id}"}, nuevo}
+    end
+  end
+
+  # El abandono de un invitado retira su participacion sin cancelar la partida.
+  def salir_invitado(pid, usuario), do: GenServer.call(pid, {:salir_invitado, usuario})
+
+  @impl true
+  def handle_call({:salir_invitado, usuario}, _from, estado) do
+    if usuario == estado.creador or not Map.has_key?(estado.receptores, usuario) do
+      {:reply, {:error, "No eres un invitado de esta partida"}, estado}
+    else
+      nuevo = %{estado |
+        jugadores: List.delete(estado.jugadores, usuario),
+        receptores: Map.delete(estado.receptores, usuario),
+        respuestas_humanos: Map.delete(estado.respuestas_humanos, usuario),
+        puntajes: if(estado.estado == :esperando,
+          do: Map.delete(estado.puntajes, usuario), else: estado.puntajes)}
+      notificar(nuevo, "#{usuario} abandono la partida")
+      nuevo = if nuevo.estado == :jugando and nuevo.ronda_abierta,
+        do: verificar_respuestas(nuevo), else: nuevo
+      {:reply, {:ok, "Abandonaste la partida"}, nuevo}
+    end
   end
 
   # ============================================================
@@ -156,6 +276,7 @@ defmodule Trivia.Partida do
             inicio: DateTime.utc_now(),
             pregunta_actual: 1,
             respuesta_humano: nil,
+            respuestas_humanos: %{},
             respuestas_bots: %{},
             tiempos_respuesta: %{},
             resultados_ronda: %{}
@@ -194,7 +315,7 @@ defmodule Trivia.Partida do
       estado.estado != :jugando ->
         {:reply, {:error, "La partida no esta en juego"}, estado}
 
-      usuario != estado.creador ->
+      not Map.has_key?(estado.receptores, usuario) ->
         {:reply, {:error, "No perteneces a esta partida"}, estado}
 
       # Impide responder durante la pausa entre preguntas
@@ -208,16 +329,16 @@ defmodule Trivia.Partida do
       opcion not in ["A", "B", "C", "D"] ->
         {:reply, {:error, "La respuesta debe ser A, B, C o D"}, estado}
 
-      estado.respuesta_humano != nil ->
+      Map.has_key?(estado.respuestas_humanos, usuario) ->
         {:reply, {:error, "Ya respondiste esta pregunta"}, estado}
 
       true ->
-        evaluar_respuesta(estado, opcion)
+        evaluar_respuesta(estado, usuario, opcion)
     end
   end
 
   # Registra y comprueba la respuesta del humano
-  defp evaluar_respuesta(estado, opcion) do
+  defp evaluar_respuesta(estado, usuario, opcion) do
     pregunta = Enum.at(estado.preguntas, estado.pregunta_actual - 1)
 
     if pregunta == nil do
@@ -227,11 +348,12 @@ defmodule Trivia.Partida do
       instante = System.monotonic_time(:millisecond)
 
       tiempos =
-        Map.put(estado.tiempos_respuesta, estado.creador, instante)
+        Map.put(estado.tiempos_respuesta, usuario, instante)
 
       nuevo_estado = %{
         estado |
-        respuesta_humano: opcion,
+        respuestas_humanos: Map.put(estado.respuestas_humanos, usuario, opcion),
+        respuesta_humano: if(usuario == estado.creador, do: opcion, else: estado.respuesta_humano),
         tiempos_respuesta: tiempos
       }
 
@@ -274,18 +396,21 @@ defmodule Trivia.Partida do
       "Pregunta #{estado.pregunta_actual} de #{length(estado.preguntas)}"
     )
 
-    # Envia la pregunta al humano
-    if is_pid(estado.receptor) do
+    # Envia la pregunta a todos los humanos conectados.
+    Enum.each(estado.receptores, fn {_usuario, receptor} ->
+    if is_pid(receptor) do
       # No enviamos la respuesta correcta al cliente
       pregunta_publica = Map.delete(pregunta, "respuesta")
 
-      send(estado.receptor, {:pregunta, pregunta_publica})
+      send(receptor, {:pregunta, pregunta_publica})
 
       send(
-        estado.receptor,
+        receptor,
         {:mensaje, "Tienes #{estado.tiempo} segundos para responder"}
       )
     end
+
+    end)
 
     # Envia la pregunta completa a los bots
     Enum.each(estado.bots, fn bot ->
@@ -308,6 +433,7 @@ defmodule Trivia.Partida do
       temporizador: referencia,
       inicio_ronda: inicio_ronda,
       respuesta_humano: nil,
+      respuestas_humanos: %{},
       respuestas_bots: %{},
       tiempos_respuesta: %{},
       resultados_ronda: %{}
@@ -377,7 +503,9 @@ defmodule Trivia.Partida do
   # ============================================================
 
   defp verificar_respuestas(estado) do
-    humano_respondio = estado.respuesta_humano != nil
+    humano_respondio = Enum.all?(Map.keys(estado.receptores), fn usuario ->
+      Map.has_key?(estado.respuestas_humanos, usuario)
+    end)
 
     cantidad_bots = length(estado.bots)
     bots_respondieron = map_size(estado.respuestas_bots)
@@ -483,12 +611,7 @@ defmodule Trivia.Partida do
     pregunta = Enum.at(estado.preguntas, estado.pregunta_actual - 1)
 
     # Junta las respuestas de todos los participantes
-    respuestas =
-      Map.put(
-        estado.respuestas_bots,
-        estado.creador,
-        estado.respuesta_humano
-      )
+    respuestas = Map.merge(estado.respuestas_bots, estado.respuestas_humanos)
 
     # Calcula los puntos de cada jugador
     {puntajes, resultados} =
@@ -789,9 +912,9 @@ end
 
   # Envia mensajes al receptor del jugador
   defp notificar(estado, mensaje) do
-    if is_pid(estado.receptor) do
-      send(estado.receptor, {:mensaje, mensaje})
-    end
+    Enum.each(estado.receptores, fn {_usuario, receptor} ->
+      if is_pid(receptor), do: send(receptor, {:mensaje, mensaje})
+    end)
   end
 
 end

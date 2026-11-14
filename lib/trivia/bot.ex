@@ -1,95 +1,112 @@
-
 defmodule Trivia.Bot do
-
-  # Inicia un proceso independiente enlazado a la partida
+  # Cada bot es un proceso independiente enlazado a su partida.
+  # Si la partida falla, el bot termina con ella.
   def iniciar(nombre, dificultad) do
-    spawn_link(fn ->
-      escuchar(nombre, dificultad)
-    end)
+    spawn_link(fn -> escuchar(nombre, dificultad) end)
   end
 
-  # Mantiene al bot esperando mensajes
+  # Mantiene el proceso del bot esperando mensajes.
   defp escuchar(nombre, dificultad) do
     receive do
-      # Permite consultar la informacion del bot
       {:consultar, solicitante} ->
         send(solicitante, {:datos_bot, nombre, dificultad, self()})
         escuchar(nombre, dificultad)
 
-      # Recibe una pregunta enviada por la partida
+      # La partida envia la pregunta, su numero, el tiempo y su propio PID.
       {:pregunta, pregunta, numero_ronda, tiempo, partida} ->
-        # Elige una respuesta segun la dificultad del bot
-        respuesta = elegir_respuesta(pregunta, dificultad)
+        case decidir(pregunta, dificultad, tiempo) do
+          {:ok, respuesta, retraso} ->
+            # El bot programa su respuesta sin bloquear su proceso.
+            Process.send_after(
+              self(),
+              {:enviar_respuesta, partida, numero_ronda, respuesta},
+              retraso
+            )
 
-        # Calcula cuanto tardara el bot en responder
-        retraso = calcular_retraso(tiempo)
-
-        # Programa la respuesta sin detener el proceso
-        Process.send_after(
-          self(),
-          {:enviar_respuesta, partida, numero_ronda, respuesta},
-          retraso
-        )
+          {:error, _motivo} ->
+            # Una pregunta invalida no debe hacer caer al bot.
+            :ok
+        end
 
         escuchar(nombre, dificultad)
 
-      # Envia la respuesta al proceso de la partida
+      # La partida recibe exactamente el mismo formato de mensaje de antes.
       {:enviar_respuesta, partida, numero_ronda, respuesta} ->
-        send(
-          partida,
-          {:respuesta_bot, nombre, numero_ronda, respuesta}
-        )
-
+        send(partida, {:respuesta_bot, nombre, numero_ronda, respuesta})
         escuchar(nombre, dificultad)
 
-      # Permite detener el proceso del bot
       :detener ->
         :ok
 
-      # Ignora mensajes desconocidos
       _otro ->
         escuchar(nombre, dificultad)
     end
   end
 
-  # Selecciona una respuesta segun la dificultad
-  defp elegir_respuesta(pregunta, dificultad) do
+  # Funcion separada para facilitar las pruebas automaticas.
+  # Retorna la opcion elegida y el retraso en milisegundos.
+  def decidir(pregunta, dificultad, tiempo) when is_map(pregunta) do
+    nivel = pregunta["nivel"]
     correcta = pregunta["respuesta"]
 
-    probabilidad =
-      case dificultad do
-        "facil" -> 40
-        "dificil" -> 80
-        _ -> 40
-      end
+    cond do
+      dificultad not in ["facil", "dificil"] ->
+        {:error, "Dificultad de bot invalida"}
 
-    # Genera un numero aleatorio entre 1 y 100
-    numero = :rand.uniform(100)
+      nivel not in ["basico", "intermedio", "avanzado"] ->
+        {:error, "Nivel de pregunta invalido"}
 
-    if numero <= probabilidad do
-      correcta
-    else
-      # Elige una opcion incorrecta aleatoriamente
-      opciones_incorrectas =
-        Enum.reject(["A", "B", "C", "D"], fn opcion ->
-          opcion == correcta
-        end)
+      correcta not in ["A", "B", "C", "D"] ->
+        {:error, "Respuesta correcta invalida"}
 
-      Enum.random(opciones_incorrectas)
+      not is_integer(tiempo) or tiempo <= 0 ->
+        {:error, "Tiempo de pregunta invalido"}
+
+      true ->
+        probabilidad = probabilidad_acierto(dificultad, nivel)
+        respuesta = elegir_respuesta(correcta, probabilidad)
+        retraso = calcular_retraso(dificultad, tiempo)
+        {:ok, respuesta, retraso}
     end
   end
 
-  # Calcula el tiempo que tardara en responder el bot
-  defp calcular_retraso(tiempo) do
-    # Convertimos el tiempo de la ronda a milisegundos
-    tiempo_ms = tiempo * 1000
+  def decidir(_, _, _), do: {:error, "Pregunta invalida"}
 
-    # El bot responde entre 1 segundo y el 80% del tiempo
-    limite = max(1, trunc(tiempo_ms * 0.8))
+  # Porcentaje de acierto segun la dificultad del bot y de la pregunta.
+  defp probabilidad_acierto("facil", "basico"), do: 40
+  defp probabilidad_acierto("facil", "intermedio"), do: 30
+  defp probabilidad_acierto("facil", "avanzado"), do: 20
+  defp probabilidad_acierto("dificil", "basico"), do: 80
+  defp probabilidad_acierto("dificil", "intermedio"), do: 70
+  defp probabilidad_acierto("dificil", "avanzado"), do: 60
 
-    minimo = min(1000, limite)
-
-    minimo + :rand.uniform(limite - minimo + 1) - 1
+  # Sortea un numero de 1 a 100 para decidir si acierta.
+  defp elegir_respuesta(correcta, probabilidad) do
+    if :rand.uniform(100) <= probabilidad do
+      correcta
+    else
+      # Si falla, elige solo entre las otras tres opciones.
+      ["A", "B", "C", "D"]
+      |> Enum.reject(fn opcion -> opcion == correcta end)
+      |> Enum.random()
+    end
   end
 
+  # Calcula el instante de respuesta dentro del intervalo exigido.
+  # Se trabaja en milisegundos para permitir tiempos fraccionarios.
+  defp calcular_retraso(dificultad, tiempo) do
+    tiempo_ms = tiempo * 1000
+
+    {porcentaje_minimo, porcentaje_maximo} =
+      case dificultad do
+        "facil" -> {40, 90}
+        "dificil" -> {10, 40}
+      end
+
+    minimo = div(tiempo_ms * porcentaje_minimo, 100)
+    maximo = div(tiempo_ms * porcentaje_maximo, 100)
+
+    # Ambos extremos del intervalo estan incluidos.
+    minimo + :rand.uniform(maximo - minimo + 1) - 1
+  end
 end

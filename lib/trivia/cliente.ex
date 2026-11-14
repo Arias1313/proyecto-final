@@ -26,12 +26,16 @@ defmodule Trivia.Cliente do
     IO.puts("conectados")
     IO.puts("create_game tema=<tema> preguntas=<n> tiempo=<segundos>")
     IO.puts("list_games")
+    IO.puts("score")
+    IO.puts("ranking [tema]")
     IO.puts("add_bot facil|dificil")
     IO.puts("start_game")
     IO.puts("answer A|B|C|D")
+    IO.puts("leave_game")
     IO.puts("disconnect")
     IO.puts("ayuda")
     IO.puts("salir")
+    IO.puts("join_game ID - Unirse a una partida en espera")
   end
 
   # Mantiene funcionando la consola
@@ -205,6 +209,23 @@ defmodule Trivia.Cliente do
     {:continuar, estado}
   end
 
+  # Unirse a una partida creada por otro jugador.
+  defp procesar_comando("join_game " <> texto_id, estado) do
+    if estado.usuario == nil do
+      IO.puts("Debes iniciar sesion primero")
+    else
+      case Integer.parse(String.trim(texto_id)) do
+        {id, ""} when id > 0 ->
+          case Servidor.solicitar(estado.servidor, {:join_game, id}) do
+            {:ok, mensaje} -> IO.puts(mensaje)
+            {:error, motivo} -> IO.puts("Error: #{motivo}")
+          end
+        _ -> IO.puts("Uso: join_game ID")
+      end
+    end
+    {:continuar, estado}
+  end
+
   # ============================================================
   # AGREGAR BOTS A LA PARTIDA
   # ============================================================
@@ -293,8 +314,76 @@ defmodule Trivia.Cliente do
   end
 
   # ============================================================
+
+  # ============================================================
+  # ETAPA 26: PUNTAJE HISTORICO Y RANKING
+  # ============================================================
+
+  # Consulta el puntaje historico del usuario conectado.
+  defp procesar_comando("score", estado) do
+    case Servidor.solicitar(estado.servidor, :score) do
+      {:ok, datos} ->
+        IO.puts("\n===== #{datos.usuario} =====")
+        IO.puts("Puntaje acumulado: #{datos.total}")
+        IO.puts("Partidas jugadas: #{datos.partidas}")
+        IO.puts("\nTema | Puntaje | Nivel")
+
+        Enum.each(datos.temas, fn tema ->
+          IO.puts("#{tema.tema} | #{tema.puntos} | #{tema.nivel}")
+        end)
+
+        if datos.temas == [], do: IO.puts("Aun no has jugado partidas")
+
+      {:error, motivo} ->
+        IO.puts("Error: #{motivo}")
+    end
+
+    {:continuar, estado}
+  end
+
+  # Muestra el ranking historico de todos los temas.
+  defp procesar_comando("ranking", estado) do
+    mostrar_ranking(estado, nil)
+    {:continuar, estado}
+  end
+
+  # Muestra el ranking de un tema concreto.
+  defp procesar_comando("ranking " <> tema, estado) do
+    mostrar_ranking(estado, String.trim(tema))
+    {:continuar, estado}
+  end
+
+  defp mostrar_ranking(estado, tema) do
+    case Servidor.solicitar(estado.servidor, {:ranking, tema}) do
+      {:ok, jugadores} ->
+        titulo = if tema == nil, do: "global", else: "de #{tema}"
+        IO.puts("\n===== Ranking #{titulo} =====")
+        IO.puts("# | Jugador | Puntaje | Partidas")
+
+        jugadores
+        |> Enum.with_index(1)
+        |> Enum.each(fn {jugador, posicion} ->
+          IO.puts("#{posicion} | #{jugador.usuario} | #{jugador.puntos} | #{jugador.partidas}")
+        end)
+
+        if jugadores == [], do: IO.puts("No hay resultados registrados")
+
+      {:error, motivo} ->
+        IO.puts("Error: #{motivo}")
+    end
+  end
+
   # DESCONEXION Y SALIDA
   # ============================================================
+
+  # ETAPA 27: abandona la partida, pero conserva la sesion.
+  defp procesar_comando("leave_game", estado) do
+    case Servidor.solicitar(estado.servidor, :leave_game) do
+      {:ok, mensaje} -> IO.puts(mensaje)
+      {:error, motivo} -> IO.puts("Error: #{motivo}")
+    end
+    {:continuar, estado}
+  end
 
   # Cierra la sesion actual
   defp procesar_comando("disconnect", estado) do

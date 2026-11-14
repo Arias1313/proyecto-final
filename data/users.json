@@ -70,5 +70,21 @@
   {
     "clave": "1234",
     "usuario": "jugador_final"
+  },
+  {
+    "clave": "1234",
+    "usuario": "jugador_persistencia"
+  },
+  {
+    "clave": "1234",
+    "usuario": "jugador_prueba"
+  },
+  {
+    "clave": "1234",
+    "usuario": "jugador1"
+  },
+  {
+    "clave": "1234",
+    "usuario": "jugador2"
   }
 ]

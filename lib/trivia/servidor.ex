@@ -85,13 +85,17 @@ defmodule Trivia.Servidor do
         {:reply, {:error, "No tienes una sesion activa"}, estado}
 
       {referencia, sesion} ->
-        Process.demonitor(referencia, [:flush])
-        GestorJugadores.cerrar_sesion(sesion.usuario)
+        case GestorPartidas.abandonar_partida(sesion.usuario) do
+          {:error, motivo} when motivo != "No tienes una partida creada" ->
+            {:reply, {:error, motivo}, estado}
 
-        sesiones = Map.delete(estado.sesiones, referencia)
-
-        {:reply, {:ok, "Sesion cerrada correctamente"},
-         %{estado | sesiones: sesiones}}
+          _ ->
+            Process.demonitor(referencia, [:flush])
+            GestorJugadores.cerrar_sesion(sesion.usuario)
+            sesiones = Map.delete(estado.sesiones, referencia)
+            {:reply, {:ok, "Sesion cerrada correctamente"},
+             %{estado | sesiones: sesiones}}
+        end
     end
   end
 
@@ -124,6 +128,17 @@ defmodule Trivia.Servidor do
             sesion.receptor
           )
 
+        {:reply, respuesta, estado}
+    end
+  end
+
+  # El usuario conectado puede unirse a una partida ajena en espera.
+  @impl true
+  def handle_call({:join_game, id}, {pid_cliente, _}, estado) do
+    case buscar_sesion(estado.sesiones, pid_cliente) do
+      nil -> {:reply, {:error, "Debes iniciar sesion"}, estado}
+      sesion ->
+        respuesta = GestorPartidas.unirse_partida(id, sesion.usuario, sesion.receptor)
         {:reply, respuesta, estado}
     end
   end
@@ -163,6 +178,13 @@ defmodule Trivia.Servidor do
         {:noreply, estado}
 
       {sesion, sesiones} ->
+        # Cuando desaparece el receptor, la partida debe finalizar
+        # y registrar los puntos acumulados hasta el abandono.
+        case GestorPartidas.abandonar_partida(sesion.usuario) do
+          {:error, motivo} when motivo != "No tienes una partida creada" ->
+            IO.warn("No se pudo cerrar la partida de #{sesion.usuario}: #{motivo}")
+          _ -> :ok
+        end
         GestorJugadores.cerrar_sesion(sesion.usuario)
 
         {:noreply, %{estado | sesiones: sesiones}}
@@ -226,5 +248,46 @@ def handle_call({:answer, opcion}, {pid_cliente, _}, estado) do
 end
 
 
+
+
+  # ETAPA 27: abandonar la partida sin cerrar la sesion.
+  @impl true
+  def handle_call(:leave_game, {pid_cliente, _}, estado) do
+    case buscar_sesion(estado.sesiones, pid_cliente) do
+      nil -> {:reply, {:error, "Debes iniciar sesion"}, estado}
+      sesion ->
+        {:reply, GestorPartidas.abandonar_partida(sesion.usuario), estado}
+    end
+  end
+
+  # ============================================================
+  # ETAPA 26: CONSULTAS HISTORICAS
+  # ============================================================
+
+  # Solo el usuario conectado puede consultar su propio puntaje.
+  @impl true
+  def handle_call(:score, {pid_cliente, _}, estado) do
+    case buscar_sesion(estado.sesiones, pid_cliente) do
+      nil ->
+        {:reply, {:error, "Debes iniciar sesion"}, estado}
+
+      sesion ->
+        respuesta = Trivia.Estadisticas.score(sesion.usuario)
+        {:reply, respuesta, estado}
+    end
+  end
+
+  # El ranking global puede consultarse sin un tema especifico.
+  @impl true
+  def handle_call({:ranking, tema}, {pid_cliente, _}, estado) do
+    case buscar_sesion(estado.sesiones, pid_cliente) do
+      nil ->
+        {:reply, {:error, "Debes iniciar sesion"}, estado}
+
+      _sesion ->
+        respuesta = Trivia.Estadisticas.ranking(tema)
+        {:reply, respuesta, estado}
+    end
+  end
 
 end

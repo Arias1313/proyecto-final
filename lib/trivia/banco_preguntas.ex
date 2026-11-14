@@ -4,24 +4,53 @@ defmodule Trivia.BancoPreguntas do
   # Ruta donde se encuentra el banco de preguntas
   @ruta "data/questions.json"
 
-  # Lee las preguntas guardadas en el archivo JSON
-  def cargar_preguntas do
-    case File.read(@ruta) do
+  use GenServer
 
+  # El servidor lee el archivo una sola vez durante el arranque.
+  # Los clientes no inician este proceso ni tienen acceso al archivo.
+  def start_link(_) do
+    GenServer.start_link(__MODULE__, [], name: __MODULE__)
+  end
+
+  @impl true
+  def init(_) do
+    case leer_archivo() do
+      {:ok, preguntas} ->
+        case revisar_banco(preguntas) do
+          {:ok, _} -> {:ok, preguntas}
+          {:error, errores} -> {:stop, {:banco_invalido, errores}}
+        end
+      {:error, motivo} -> {:stop, {:banco_invalido, motivo}}
+    end
+  end
+
+  # API publica: devuelve la copia de las preguntas almacenadas en memoria.
+  def cargar_preguntas, do: GenServer.call(__MODULE__, :cargar_preguntas)
+
+  @impl true
+  def handle_call(:cargar_preguntas, _from, preguntas) do
+    {:reply, {:ok, preguntas}, preguntas}
+  end
+
+  # Devuelve los temas reales del banco, sin tener una lista fija.
+  def temas_disponibles, do: GenServer.call(__MODULE__, :temas_disponibles)
+
+  @impl true
+  def handle_call(:temas_disponibles, _from, preguntas) do
+    temas = preguntas |> Enum.map(& &1["tema"]) |> Enum.uniq() |> Enum.sort()
+    {:reply, {:ok, temas}, preguntas}
+  end
+
+  # Esta funcion privada es la unica que abre questions.json.
+  defp leer_archivo do
+    case File.read(@ruta) do
       {:ok, contenido} ->
         case Jason.decode(contenido) do
-          {:ok, preguntas} when is_list(preguntas) ->
-            {:ok, preguntas}
-
-          {:ok, _} ->
-            {:error, "El banco debe contener una lista de preguntas"}
-
-          {:error, _} ->
-            {:error, "El archivo JSON tiene un formato incorrecto"}
+          {:ok, preguntas} when is_list(preguntas) -> {:ok, preguntas}
+          {:ok, _} -> {:error, "El banco debe contener una lista de preguntas"}
+          {:error, _} -> {:error, "El archivo JSON tiene un formato incorrecto"}
         end
-
-      {:error, _} ->
-        {:error, "No se pudo leer el archivo de preguntas"}
+      {:error, _} -> {:error, "No se pudo leer el archivo de preguntas"}
     end
   end
 
@@ -59,7 +88,6 @@ defmodule Trivia.BancoPreguntas do
 
 
   # Temas y niveles permitidos
-  @temas ["ciencia", "historia", "geografia", "tecnologia"]
   @niveles ["basico", "intermedio", "avanzado"]
   @opciones ["A", "B", "C", "D"]
 
@@ -72,7 +100,7 @@ defmodule Trivia.BancoPreguntas do
     respuesta = pregunta["respuesta"]
 
     cond do
-      tema not in @temas ->
+      not is_binary(tema) or not Regex.match?(~r/^[a-z][a-z0-9_]*$/, tema) ->
         {:error, "Tema no permitido"}
 
       nivel not in @niveles ->
@@ -107,11 +135,8 @@ defmodule Trivia.BancoPreguntas do
   # Comprueba que todas las preguntas sean validas
   def validar_banco do
     case cargar_preguntas() do
-      {:ok, preguntas} ->
-        revisar_banco(preguntas)
-
-      {:error, motivo} ->
-        {:error, motivo}
+      {:ok, preguntas} -> revisar_banco(preguntas)
+      {:error, motivo} -> {:error, motivo}
     end
   end
 
@@ -138,8 +163,10 @@ defmodule Trivia.BancoPreguntas do
 
   # Comprueba que existan 8 preguntas por tema y nivel
   defp verificar_cantidades(preguntas) do
+    temas = preguntas |> Enum.map(& &1["tema"]) |> Enum.uniq()
+
     errores =
-      for tema <- @temas,
+      for tema <- temas,
           nivel <- @niveles,
           reduce: [] do
         acumulado ->
@@ -164,6 +191,9 @@ defmodule Trivia.BancoPreguntas do
     repetidas = length(enunciados) != length(Enum.uniq(enunciados))
 
     cond do
+      length(temas) < 4 ->
+        {:error, ["El banco debe contener al menos 4 temas"]}
+
       errores != [] ->
         {:error, Enum.reverse(errores)}
 
