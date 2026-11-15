@@ -1,4 +1,6 @@
 # ProyectoTrivia
+jean carlo arias salazar
+juan sebastian sanchez
 
 comando para iniciar el servidor 
 
