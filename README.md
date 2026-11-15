@@ -1,21 +1,24 @@
 # ProyectoTrivia
 
-**TODO: Add description**
+comando para iniciar el servidor 
 
-## Installation
+Terminal 1. 
+Servidor
+$env:TRIVIA_ROL = "servidor"
+iex.bat --sname servidor -S mix
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `proyecto_trivia` to your list of dependencies in `mix.exs`:
+Terminal 2.
+ Cliente
+$env:TRIVIA_ROL = "cliente"
+iex.bat --sname cliente1 -S mix
 
-```elixir
-def deps do
-  [
-    {:proyecto_trivia, "~> 0.1.0"}
-  ]
-end
-```
+Terminal 3.
+$env:TRIVIA_ROL = "cliente"
+iex.bat --sname cliente2 -S mix
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/proyecto_trivia>.
 
+Desde IEx ejecuta:
+
+Node.connect(:"servidor@nombre_pc")
+
+Trivia.Cliente.iniciar(:"servidor@nombre_pc")
